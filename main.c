@@ -42,6 +42,8 @@ void show_help() {
     printf("  exit/quit                  - 退出控制台\n\n");
 }
 
+//123
+
 int main() {
     char input[256];
     char *argv[10];
