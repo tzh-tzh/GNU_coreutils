@@ -5,16 +5,23 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <pwd.h>
+#include <grp.h>
 
-// 选项标志
-int opt_l = 0;  // 长格式显示
-int opt_a = 0;  // 显示所有文件（包括隐藏文件）
-int opt_h = 0;  // 以易读单位显示文件大小
-int opt_t = 0;  // 按修改时间排序
-int opt_r = 0;  // 反向排序
-int opt_S = 0;  // 按文件大小排序
-int opt_d = 0;  // 仅显示目录本身
-int opt_R = 0;  // 递归列出子目录
+// 选项结构体
+typedef struct {
+    int l;  // 长格式显示
+    int a;  // 显示所有文件（包括隐藏文件）
+    int h;  // 以易读单位显示文件大小
+    int t;  // 按修改时间排序
+    int r;  // 反向排序
+    int S;  // 按文件大小排序
+    int d;  // 仅显示目录本身
+    int R;  // 递归列出子目录
+} ls_options;
+
+// 全局指针，用于在比较函数中访问选项
+ls_options *current_options;
 
 // 文件信息结构体，用于排序
 typedef struct {
@@ -22,12 +29,25 @@ typedef struct {
     struct stat st;
 } file_info;
 
-// 比较函数：按名称排序
+// 比较函数：按名称排序（与标准ls一致，隐藏文件排在前面）
 int compare_name(const void *a, const void *b) {
     const file_info *fa = (const file_info *)a;
     const file_info *fb = (const file_info *)b;
+    
+    // 检查是否是隐藏文件
+    int fa_hidden = (fa->name[0] == '.');
+    int fb_hidden = (fb->name[0] == '.');
+    
+    // 隐藏文件排在前面
+    if (fa_hidden && !fb_hidden) {
+        return -1;
+    } else if (!fa_hidden && fb_hidden) {
+        return 1;
+    }
+    
+    // 都是隐藏文件或都是非隐藏文件，按名称排序
     int result = strcmp(fa->name, fb->name);
-    return opt_r ? -result : result;
+    return current_options->r ? -result : result;
 }
 
 // 比较函数：按修改时间排序
@@ -42,7 +62,7 @@ int compare_time(const void *a, const void *b) {
     } else {
         result = 0;
     }
-    return opt_r ? -result : result;
+    return current_options->r ? -result : result;
 }
 
 // 比较函数：按文件大小排序
@@ -57,7 +77,7 @@ int compare_size(const void *a, const void *b) {
     } else {
         result = 0;
     }
-    return opt_r ? -result : result;
+    return current_options->r ? -result : result;
 }
 
 // 格式化文件大小为易读格式
@@ -88,7 +108,7 @@ void print_permissions(mode_t mode) {
 }
 
 // 打印文件信息（长格式）
-void print_file_info(const char *path, const char *name) {
+void print_file_info(const char *path, const char *name, ls_options *opts) {
     char full_path[512];
     struct stat st;
     char size_str[32];
@@ -110,11 +130,22 @@ void print_file_info(const char *path, const char *name) {
     // 打印链接数
     printf("%3ld ", (long)st.st_nlink);
 
-    // 打印所有者和组（简化版，只显示UID和GID）
-    printf("%5ld %5ld ", (long)st.st_uid, (long)st.st_gid);
+    // 打印所有者和组
+    struct passwd *pw = getpwuid(st.st_uid);
+    struct group *gr = getgrgid(st.st_gid);
+    if (pw != NULL) {
+        printf("%-8s ", pw->pw_name);
+    } else {
+        printf("%5ld ", (long)st.st_uid);
+    }
+    if (gr != NULL) {
+        printf("%-8s ", gr->gr_name);
+    } else {
+        printf("%5ld ", (long)st.st_gid);
+    }
 
     // 打印文件大小
-    if (opt_h) {
+    if (opts->h) {
         format_size(st.st_size, size_str);
         printf("%8s ", size_str);
     } else {
@@ -123,7 +154,7 @@ void print_file_info(const char *path, const char *name) {
 
     // 打印修改时间
     struct tm *tm_info = localtime(&st.st_mtime);
-    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M", tm_info);
+    strftime(time_str, sizeof(time_str), "%b %d %H:%M", tm_info);
     printf("%s ", time_str);
 
     // 打印文件名
@@ -134,6 +165,7 @@ void print_file_info(const char *path, const char *name) {
  * 列出指定目录的内容
  * @param path: 要列出的目录路径
  * @param level: 递归层级（用于控制缩进和避免无限递归）
+ * @param opts: 选项结构体指针
  * @return: 无返回值
  * 
  * 该函数实现类似ls命令的功能，支持多种选项：
@@ -144,13 +176,16 @@ void print_file_info(const char *path, const char *name) {
  * - -R: 递归显示子目录
  * - -d: 仅显示目录本身而不显示其内容
  */
-void list_directory(const char *path, int level) {
+void list_directory(const char *path, int level, ls_options *opts) {
     DIR *dir;
     struct dirent *entry;
     char full_path[512];
     file_info *files = NULL;
     int file_count = 0;
     int i;
+
+    // 设置全局指针，用于比较函数
+    current_options = opts;
 
     // 打开目录
     dir = opendir(path);
@@ -162,7 +197,7 @@ void list_directory(const char *path, int level) {
     // 读取所有目录项
     while ((entry = readdir(dir)) != NULL) {
         // 跳过隐藏文件，除非指定了 -a 选项
-        if (!opt_a && entry->d_name[0] == '.') {
+        if (!opts->a && entry->d_name[0] == '.') {
             continue;
         }
 
@@ -193,13 +228,23 @@ void list_directory(const char *path, int level) {
     // 关闭目录
     closedir(dir);
 
+    // 计算并显示磁盘块总数（与标准ls一致，以1024字节为单位）
+    if (files != NULL && file_count > 0 && !opts->d) {
+        long total_blocks = 0;
+        for (int j = 0; j < file_count; j++) {
+            total_blocks += files[j].st.st_blocks;
+        }
+        // 标准ls命令显示的是1024字节为单位的块数，所以除以2
+        printf("总计 %ld\n", total_blocks / 2);
+    }
+
     // 处理和显示文件列表
     if (files != NULL && file_count > 0) {
         // 根据指定选项对文件进行排序
-        if (opt_t) {
+        if (opts->t) {
             // 按修改时间排序
             qsort(files, file_count, sizeof(file_info), compare_time);
-        } else if (opt_S) {
+        } else if (opts->S) {
             // 按文件大小排序
             qsort(files, file_count, sizeof(file_info), compare_size);
         } else {
@@ -208,19 +253,19 @@ void list_directory(const char *path, int level) {
         }
 
         // 打印文件信息
-        if (opt_d) {
+        if (opts->d) {
             // 仅显示目录本身
-            if (opt_l) {
-                print_file_info(".", path);
+            if (opts->l) {
+                print_file_info(".", path, opts);
             } else {
                 printf("%s\n", path);
             }
         } else {
             // 列出目录内容
             for (i = 0; i < file_count; i++) {
-                if (opt_l) {
+                if (opts->l) {
                     // 长格式显示
-                    print_file_info(path, files[i].name);
+                    print_file_info(path, files[i].name, opts);
                 } else {
                     // 简单格式显示
                     printf("%s\n", files[i].name);
@@ -229,12 +274,12 @@ void list_directory(const char *path, int level) {
 
             // 递归列出子目录内容（如果指定了 -R 选项）
             for (i = 0; i < file_count; i++) {
-                if (opt_R && S_ISDIR(files[i].st.st_mode) && 
+                if (opts->R && S_ISDIR(files[i].st.st_mode) && 
                     strcmp(files[i].name, ".") != 0 && 
                     strcmp(files[i].name, "..") != 0) {
                     snprintf(full_path, sizeof(full_path), "%s/%s", path, files[i].name);
                     printf("\n%s/:\n", full_path);
-                    list_directory(full_path, level + 1);
+                    list_directory(full_path, level + 1, opts);
                 }
             }
         }
@@ -253,16 +298,7 @@ void ls_command(int argc, char *argv[]) {
     char *path = ".";
     char expanded_path[256];
     int i, j;
-
-    /* 初始化选项标志 */
-    opt_l = 0;
-    opt_a = 0;
-    opt_h = 0;
-    opt_t = 0;
-    opt_r = 0;
-    opt_S = 0;
-    opt_d = 0;
-    opt_R = 0;
+    ls_options opts = {0}; // 初始化选项结构体
 
     /* 解析命令行选项和参数 */
     for (i = 1; i < argc; i++) {
@@ -271,28 +307,28 @@ void ls_command(int argc, char *argv[]) {
             for (j = 1; argv[i][j] != '\0'; j++) {
                 switch (argv[i][j]) {
                     case 'l':
-                        opt_l = 1;
+                        opts.l = 1;
                         break;
                     case 'a':
-                        opt_a = 1;
+                        opts.a = 1;
                         break;
                     case 'h':
-                        opt_h = 1;
+                        opts.h = 1;
                         break;
                     case 't':
-                        opt_t = 1;
+                        opts.t = 1;
                         break;
                     case 'r':
-                        opt_r = 1;
+                        opts.r = 1;
                         break;
                     case 'S':
-                        opt_S = 1;
+                        opts.S = 1;
                         break;
                     case 'd':
-                        opt_d = 1;
+                        opts.d = 1;
                         break;
                     case 'R':
-                        opt_R = 1;
+                        opts.R = 1;
                         break;
                     default:
                         printf("ls: invalid option -- '%c'\n", argv[i][j]);
@@ -327,5 +363,5 @@ void ls_command(int argc, char *argv[]) {
     }
 
     /* 调用核心函数显示目录内容 */
-    list_directory(path, 0);
+    list_directory(path, 0, &opts);
 }

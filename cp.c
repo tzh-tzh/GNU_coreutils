@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200112L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,17 +8,21 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <libgen.h>
+#include <dirent.h>
+#include <utime.h>
 
-// 选项标志
-int opt_r = 0;  // 递归复制目录
-int opt_i = 0;  // 交互式覆盖确认
-int opt_f = 0;  // 强制覆盖
-int opt_v = 0;  // 显示复制过程
-int opt_a = 0;  // 归档模式
-int opt_p = 0;  // 保留文件属性
-int opt_u = 0;  // 仅更新
-int opt_l = 0;  // 创建硬链接
-int opt_s = 0;  // 创建软链接
+// 选项结构体
+typedef struct {
+    int r;  // 递归复制目录
+    int i;  // 交互式覆盖确认
+    int f;  // 强制覆盖
+    int v;  // 显示复制过程
+    int a;  // 归档模式
+    int p;  // 保留文件属性
+    int u;  // 仅更新
+    int l;  // 创建硬链接
+    int s;  // 创建软链接
+} cp_options;
 
 // 检查文件是否存在
 int file_exists(const char *path) {
@@ -34,7 +40,7 @@ int is_directory(const char *path) {
 }
 
 // 复制单个文件
-int copy_file(const char *src_path, const char *dest_path) {
+int copy_file(const char *src_path, const char *dest_path, cp_options *opts) {
     int src_fd, dest_fd;
     char buffer[4096];
     ssize_t n;
@@ -49,11 +55,11 @@ int copy_file(const char *src_path, const char *dest_path) {
     // 检查目标文件是否存在
     if (file_exists(dest_path)) {
         // 检查是否需要更新
-        if (opt_u) {
+        if (opts->u) {
             struct stat dest_stat;
             if (stat(dest_path, &dest_stat) == 0) {
                 if (src_stat.st_mtime <= dest_stat.st_mtime) {
-                    if (opt_v) {
+                    if (opts->v) {
                         printf("%s is newer or same age as %s, skipping\n", dest_path, src_path);
                     }
                     return 0;
@@ -62,7 +68,7 @@ int copy_file(const char *src_path, const char *dest_path) {
         }
 
         // 交互式确认
-        if (opt_i && !opt_f) {
+        if (opts->i && !opts->f) {
             char response;
             printf("cp: overwrite '%s'? ", dest_path);
             if (scanf("%c", &response) != 1 || response != 'y') {
@@ -72,27 +78,39 @@ int copy_file(const char *src_path, const char *dest_path) {
     }
 
     // 创建硬链接
-    if (opt_l) {
+    if (opts->l) {
+#ifdef _WIN32
+        // Windows 不支持硬链接
+        printf("cp: hard links not supported on Windows\n");
+        return -1;
+#else
         if (link(src_path, dest_path) == -1) {
             perror("link");
             return -1;
         }
-        if (opt_v) {
+        if (opts->v) {
             printf("%s -> %s (hard link)\n", src_path, dest_path);
         }
         return 0;
+#endif
     }
 
     // 创建软链接
-    if (opt_s) {
+    if (opts->s) {
+#ifdef _WIN32
+        // Windows 不支持软链接
+        printf("cp: symbolic links not supported on Windows\n");
+        return -1;
+#else
         if (symlink(src_path, dest_path) == -1) {
             perror("symlink");
             return -1;
         }
-        if (opt_v) {
+        if (opts->v) {
             printf("%s -> %s (symbolic link)\n", src_path, dest_path);
         }
         return 0;
+#endif
     }
 
     // 打开源文件
@@ -104,7 +122,7 @@ int copy_file(const char *src_path, const char *dest_path) {
 
     // 打开目标文件
     int flags = O_WRONLY | O_CREAT | O_TRUNC;
-    if (opt_f) {
+    if (opts->f) {
         flags |= O_EXCL;
     }
     dest_fd = open(dest_path, flags, 0644);
@@ -137,19 +155,27 @@ int copy_file(const char *src_path, const char *dest_path) {
     close(dest_fd);
 
     // 保留文件属性
-    if (opt_p || opt_a) {
+    if (opts->p || opts->a) {
         if (chmod(dest_path, src_stat.st_mode) == -1) {
             perror("chmod");
         }
+#ifdef _WIN32
+        // Windows 不支持 chown
+#else
         if (chown(dest_path, src_stat.st_uid, src_stat.st_gid) == -1) {
             // 可能没有权限，忽略错误
         }
-        if (utime(dest_path, NULL) == -1) {
+#endif
+        // 正确保留源文件的时间戳
+        struct utimbuf utimes;
+        utimes.actime = src_stat.st_atime;  // 访问时间
+        utimes.modtime = src_stat.st_mtime; // 修改时间
+        if (utime(dest_path, &utimes) == -1) {
             perror("utime");
         }
     }
 
-    if (opt_v) {
+    if (opts->v) {
         printf("%s -> %s\n", src_path, dest_path);
     }
 
@@ -157,7 +183,7 @@ int copy_file(const char *src_path, const char *dest_path) {
 }
 
 // 递归复制目录
-int copy_directory(const char *src_dir, const char *dest_dir) {
+int copy_directory(const char *src_dir, const char *dest_dir, cp_options *opts) {
     DIR *dir;
     struct dirent *entry;
     char src_path[1024], dest_path[1024];
@@ -172,7 +198,11 @@ int copy_directory(const char *src_dir, const char *dest_dir) {
 
     // 创建目标目录
     if (!file_exists(dest_dir)) {
+#ifdef _WIN32
+        if (mkdir(dest_dir) == -1) {
+#else
         if (mkdir(dest_dir, 0755) == -1) {
+#endif
             perror("mkdir");
             closedir(dir);
             return -1;
@@ -199,13 +229,13 @@ int copy_directory(const char *src_dir, const char *dest_dir) {
         // 根据文件类型处理
         if (S_ISDIR(st.st_mode)) {
             // 递归复制子目录
-            if (copy_directory(src_path, dest_path) == -1) {
+            if (copy_directory(src_path, dest_path, opts) == -1) {
                 closedir(dir);
                 return -1;
             }
         } else {
             // 复制文件
-            if (copy_file(src_path, dest_path) == -1) {
+            if (copy_file(src_path, dest_path, opts) == -1) {
                 closedir(dir);
                 return -1;
             }
@@ -215,7 +245,7 @@ int copy_directory(const char *src_dir, const char *dest_dir) {
     // 关闭目录
     closedir(dir);
 
-    if (opt_v) {
+    if (opts->v) {
         printf("%s/ -> %s/\n", src_dir, dest_dir);
     }
 
@@ -227,17 +257,7 @@ void cp_command(int argc, char *argv[]) {
     char *src_path, *dest_path;
     int src_count = 0;
     char **src_paths = NULL;
-
-    // 重置选项标志
-    opt_r = 0;
-    opt_i = 0;
-    opt_f = 0;
-    opt_v = 0;
-    opt_a = 0;
-    opt_p = 0;
-    opt_u = 0;
-    opt_l = 0;
-    opt_s = 0;
+    cp_options opts = {0}; // 初始化选项结构体
 
     // 解析选项
     for (i = 1; i < argc; i++) {
@@ -247,37 +267,38 @@ void cp_command(int argc, char *argv[]) {
                 switch (argv[i][j]) {
                     case 'r':
                     case 'R':
-                        opt_r = 1;
+                        opts.r = 1;
                         break;
                     case 'i':
-                        opt_i = 1;
+                        opts.i = 1;
                         break;
                     case 'f':
-                        opt_f = 1;
+                        opts.f = 1;
                         break;
                     case 'v':
-                        opt_v = 1;
+                        opts.v = 1;
                         break;
                     case 'a':
-                        opt_a = 1;
-                        opt_p = 1;
-                        opt_r = 1;
+                        opts.a = 1;
+                        opts.p = 1;
+                        opts.r = 1;
                         break;
                     case 'p':
-                        opt_p = 1;
+                        opts.p = 1;
                         break;
                     case 'u':
-                        opt_u = 1;
+                        opts.u = 1;
                         break;
                     case 'l':
-                        opt_l = 1;
+                        opts.l = 1;
                         break;
                     case 's':
-                        opt_s = 1;
+                        opts.s = 1;
                         break;
                     default:
                         printf("cp: invalid option -- '%c'\n", argv[i][j]);
                         printf("Usage: cp [OPTION]... SOURCE DEST\n");
+                        free(src_paths);
                         return;
                 }
             }
@@ -314,16 +335,16 @@ void cp_command(int argc, char *argv[]) {
             snprintf(dest_file, sizeof(dest_file), "%s/%s", dest_path, basename(src_paths[i]));
 
             if (is_directory(src_paths[i])) {
-                if (!opt_r) {
+                if (!opts.r) {
                     printf("cp: omitting directory '%s'\n", src_paths[i]);
                     continue;
                 }
-                if (copy_directory(src_paths[i], dest_file) == -1) {
+                if (copy_directory(src_paths[i], dest_file, &opts) == -1) {
                     free(src_paths);
                     return;
                 }
             } else {
-                if (copy_file(src_paths[i], dest_file) == -1) {
+                if (copy_file(src_paths[i], dest_file, &opts) == -1) {
                     free(src_paths);
                     return;
                 }
@@ -334,7 +355,7 @@ void cp_command(int argc, char *argv[]) {
         src_path = src_paths[0];
 
         if (is_directory(src_path)) {
-            if (!opt_r) {
+            if (!opts.r) {
                 printf("cp: omitting directory '%s'\n", src_path);
                 free(src_paths);
                 return;
@@ -347,7 +368,7 @@ void cp_command(int argc, char *argv[]) {
                     // 目标是目录，复制到 dest_dir/src_dir
                     char dest_subdir[1024];
                     snprintf(dest_subdir, sizeof(dest_subdir), "%s/%s", dest_path, basename(src_path));
-                    if (copy_directory(src_path, dest_subdir) == -1) {
+                    if (copy_directory(src_path, dest_subdir, &opts) == -1) {
                         free(src_paths);
                         return;
                     }
@@ -359,7 +380,7 @@ void cp_command(int argc, char *argv[]) {
                 }
             } else {
                 // 目标不存在，创建目录并复制
-                if (copy_directory(src_path, dest_path) == -1) {
+                if (copy_directory(src_path, dest_path, &opts) == -1) {
                     free(src_paths);
                     return;
                 }
@@ -370,13 +391,13 @@ void cp_command(int argc, char *argv[]) {
                 // 目标是目录，复制到 dest_dir/src_file
                 char dest_file[1024];
                 snprintf(dest_file, sizeof(dest_file), "%s/%s", dest_path, basename(src_path));
-                if (copy_file(src_path, dest_file) == -1) {
+                if (copy_file(src_path, dest_file, &opts) == -1) {
                     free(src_paths);
                     return;
                 }
             } else {
                 // 目标是文件，直接复制
-                if (copy_file(src_path, dest_path) == -1) {
+                if (copy_file(src_path, dest_path, &opts) == -1) {
                     free(src_paths);
                     return;
                 }

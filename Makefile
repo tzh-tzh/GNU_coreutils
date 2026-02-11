@@ -13,7 +13,7 @@ TARGET = coreutils
 SRCS = main.c ls.c cp.c cat.c echo.c mkdir.c rmdir.c
 OBJS = $(SRCS:.c=.o)
 
-all: $(TARGET)
+all: clean $(TARGET)
 	# 编译完成后删除临时目标文件
 	rm -f $(OBJS)
 
