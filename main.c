@@ -9,6 +9,8 @@ void cat_command(int argc, char *argv[]);
 void echo_command(int argc, char *argv[]);
 void mkdir_command(int argc, char *argv[]);
 void rmdir_command(int argc, char *argv[]);
+void rm_command(int argc, char *argv[]);
+void touch_command(int argc, char *argv[]);
 
 // 分割命令行参数
 /**
@@ -39,6 +41,8 @@ void show_help() {
     printf("  echo [文本]                - 输出文本\n");
     printf("  mkdir <目录1> [目录2] ...   - 创建目录\n");
     printf("  rmdir <目录1> [目录2] ...   - 删除空目录\n");
+    printf("  rm [OPTION]... FILE...     - 删除文件或目录\n");
+    printf("  touch [OPTION]... FILE...  - 更新文件的访问时间和修改时间\n");
     printf("  exit/quit                  - 退出控制台\n\n");
 }
 
@@ -89,6 +93,10 @@ int main() {
             mkdir_command(argc, argv);
         } else if (strcmp(argv[0], "rmdir") == 0) {
             rmdir_command(argc, argv);
+        } else if (strcmp(argv[0], "rm") == 0) {
+            rm_command(argc, argv);
+        } else if (strcmp(argv[0], "touch") == 0) {
+            touch_command(argc, argv);
         } else {
             printf("Unknown command: %s\n", argv[0]);
             show_help();
