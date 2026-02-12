@@ -1,6 +1,11 @@
+#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <limits.h>
 
 // 函数声明
 void ls_command(int argc, char *argv[]);
@@ -11,6 +16,9 @@ void mkdir_command(int argc, char *argv[]);
 void rmdir_command(int argc, char *argv[]);
 void rm_command(int argc, char *argv[]);
 void touch_command(int argc, char *argv[]);
+void pwd_command(int argc, char *argv[]);
+void cd_command(int argc, char *argv[]);
+void mv_command(int argc, char *argv[]);
 
 // 分割命令行参数
 /**
@@ -43,6 +51,9 @@ void show_help() {
     printf("  rmdir <目录1> [目录2] ...   - 删除空目录\n");
     printf("  rm [OPTION]... FILE...     - 删除文件或目录\n");
     printf("  touch [OPTION]... FILE...  - 更新文件的访问时间和修改时间\n");
+    printf("  pwd [OPTION]...            - 显示当前工作目录\n");
+    printf("  cd [目录路径]               - 切换当前工作目录\n");
+    printf("  mv [OPTION]... SOURCE... DEST - 移动或重命名文件或目录\n");
     printf("  exit/quit                  - 退出控制台\n\n");
 }
 
@@ -56,7 +67,13 @@ int main() {
     show_help(); // 第一次进入时显示提示
     
     while (1) {
-        printf("> ");
+        // 显示当前工作目录和提示符
+        char cwd[PATH_MAX];
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
+            printf("%s> ", cwd);
+        } else {
+            printf("> ");
+        }
         
         // 读取用户输入
         if (fgets(input, sizeof(input), stdin) == NULL) {
@@ -97,6 +114,12 @@ int main() {
             rm_command(argc, argv);
         } else if (strcmp(argv[0], "touch") == 0) {
             touch_command(argc, argv);
+        } else if (strcmp(argv[0], "pwd") == 0) {
+            pwd_command(argc, argv);
+        } else if (strcmp(argv[0], "cd") == 0) {
+            cd_command(argc, argv);
+        } else if (strcmp(argv[0], "mv") == 0) {
+            mv_command(argc, argv);
         } else {
             printf("Unknown command: %s\n", argv[0]);
             show_help();
