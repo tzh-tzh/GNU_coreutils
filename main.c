@@ -19,6 +19,7 @@ void touch_command(int argc, char *argv[]);
 void pwd_command(int argc, char *argv[]);
 void cd_command(int argc, char *argv[]);
 void mv_command(int argc, char *argv[]);
+void ps_command(int argc, char *argv[]);
 
 // 分割命令行参数
 /**
@@ -54,6 +55,7 @@ void show_help() {
     printf("  pwd [OPTION]...            - 显示当前工作目录\n");
     printf("  cd [目录路径]               - 切换当前工作目录\n");
     printf("  mv [OPTION]... SOURCE... DEST - 移动或重命名文件或目录\n");
+    printf("  ps [OPTION]...             - 显示当前系统中运行的进程快照\n");
     printf("  exit/quit                  - 退出控制台\n\n");
 }
 
@@ -120,6 +122,8 @@ int main() {
             cd_command(argc, argv);
         } else if (strcmp(argv[0], "mv") == 0) {
             mv_command(argc, argv);
+        } else if (strcmp(argv[0], "ps") == 0) {
+            ps_command(argc, argv);
         } else {
             printf("Unknown command: %s\n", argv[0]);
             show_help();

@@ -10,7 +10,7 @@ endif
 
 TARGET = coreutils
 
-SRCS = main.c ls.c cp.c cat.c echo.c mkdir.c rmdir.c rm.c touch.c pwd.c cd.c mv.c
+SRCS = main.c ls.c cp.c cat.c echo.c mkdir.c rmdir.c rm.c touch.c pwd.c cd.c mv.c ps.c
 OBJS = $(SRCS:.c=.o)
 
 all: clean $(TARGET)
