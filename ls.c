@@ -229,7 +229,8 @@ void list_directory(const char *path, int level, ls_options *opts) {
     closedir(dir);
 
     // 计算并显示磁盘块总数（与标准ls一致，以1024字节为单位）
-    if (files != NULL && file_count > 0 && !opts->d) {
+    // 只有在使用 -l 选项时才显示"总计"行
+    if (files != NULL && file_count > 0 && opts->l && !opts->d) {
         long total_blocks = 0;
         for (int j = 0; j < file_count; j++) {
             total_blocks += files[j].st.st_blocks;
